@@ -9,7 +9,6 @@ from .transforms import (
     DigitWordsToChars,
     ExpandAbbreviations,
     ExpandDigitRuns,
-    FinalDigitWordCleanup,
     NormalizeCurrency,
     NormalizeEmails,
     NormalizeOrdinals,
@@ -17,8 +16,6 @@ from .transforms import (
     NormalizeSymbols,
     NormalizeURLs,
     RemoveFillerWords,
-    WhisperBasicNormalize,
-    WhisperEnglishNormalize,
 )
 
 __all__ = [
@@ -28,7 +25,6 @@ __all__ = [
     "DigitWordsToChars",
     "ExpandAbbreviations",
     "ExpandDigitRuns",
-    "FinalDigitWordCleanup",
     "NormalizeCurrency",
     "NormalizeEmails",
     "NormalizeOrdinals",
@@ -36,48 +32,55 @@ __all__ = [
     "NormalizeSymbols",
     "NormalizeURLs",
     "RemoveFillerWords",
-    "WhisperBasicNormalize",
-    "WhisperEnglishNormalize",
 ]
 
 english_wer_pipeline = jiwer.Compose([
-    # Pre-WhisperEN: handle patterns WhisperEN would mangle or remove
-    NormalizeEmails(),        # must be first: WhisperEN strips @ and dots in emails
-    NormalizeURLs(),          # WhisperEN strips slashes and scheme prefixes
-    NormalizeSymbols(),       # WhisperEN removes & and + as punctuation
-    ExpandAbbreviations(),    # expand Dr./Mr. before WhisperEN lowercases
-    # Core Whisper normalization (lowercase, punctuation, contractions, compound numbers)
-    ExpandDigitRuns(),        # preserve leading zeros before WhisperEN sees e.g. "0176"
-    DigitWordsToChars(),      # "zero one seven" → "0 1 7" before compound resolution
-    WhisperEnglishNormalize(),
-    # Post-WhisperEN: handle patterns WhisperEN preserves as-is or converts to compact form
-    # (WhisperEN preserves $5.99, 50%, 1st; and converts spoken forms back to compact)
-    ExpandDigitRuns(),        # split any remaining digit runs (e.g. from compound numbers)
-    FinalDigitWordCleanup(),  # final digit-word sweep — must run before currency/% so
-                              # it doesn't convert "nine" inside "ninety nine cents"
-    NormalizeCurrency(),      # $5.99 → five dollars ninety nine cents
-    NormalizePercentages(),   # 50% → fifty percent
-    NormalizeOrdinals(),      # 1st → first
-    RemoveFillerWords(),
-    CollapseRepetitions(),
+    # Pattern-specific normalizations run first, before punctuation is stripped
+    NormalizeEmails(),                          # user@x.com → user at x dot com
+    NormalizeURLs(),                            # https://x.com → x dot com
+    NormalizeSymbols(),                         # & → and  (before RemovePunctuation drops &)
+    ExpandAbbreviations(),                      # Dr. → doctor  (before punct removal)
+    NormalizeCurrency(),                        # $5.99 → five dollars ninety nine cents
+    NormalizePercentages(),                     # 50% → fifty percent
+    NormalizeOrdinals(),                        # 1st → first
+    # Core text normalization
+    jiwer.ExpandCommonEnglishContractions(),    # I'm → i am
+    jiwer.ToLowerCase(),
+    jiwer.RemovePunctuation(),
+    # Digit normalization
+    ExpandDigitRuns(),                          # "0176" → "0 1 7 6"
+    DigitWordsToChars(),                        # "zero one" → "0 1"
+    jiwer.RemoveMultipleSpaces(),
+    jiwer.Strip(),
+    # Speech artifact cleanup
+    RemoveFillerWords(),                        # um, uh, hmm, …
+    CollapseRepetitions(),                      # I I I → I
 ])
 
 
 def normalize_for_wer(text: str, language: str = "en") -> str:
     """Normalize text for WER comparison.
 
-    English pipeline applies, in order:
-      email → URL → symbol → currency → percentage → ordinal → abbreviation
-      → digit-run expansion → digit-word-to-char → Whisper EnglishTextNormalizer
-      → digit-run expansion → final digit cleanup → filler removal → repetition collapse
+    English pipeline (in order):
+      email → URL → symbol → abbreviation → currency → percentage → ordinal
+      → contractions → lowercase → punctuation removal
+      → digit-run expansion → digit-word-to-char
+      → filler removal → repetition collapse
 
-    All number representations collapse to space-separated single digits, so
-    "0176", "zero one seven six", and "21" all compare correctly.
+    All digit sequences collapse to space-separated single digits:
+      "0176", "zero one seven six", "0 1 7 6" all become "0 1 7 6"
 
-    For non-English text, Whisper's BasicTextNormalizer is applied instead.
+    For non-English text (language != "en"), applies only lowercase,
+    punctuation removal, and whitespace normalization.
     """
     if language == "en":
         result = english_wer_pipeline([text])
         return result[0].strip()
-    from whisper_normalizer.basic import BasicTextNormalizer
-    return BasicTextNormalizer()(text).strip()
+    # Minimal language-agnostic normalization
+    pipeline = jiwer.Compose([
+        jiwer.ToLowerCase(),
+        jiwer.RemovePunctuation(),
+        jiwer.RemoveMultipleSpaces(),
+        jiwer.Strip(),
+    ])
+    return pipeline([text])[0].strip()

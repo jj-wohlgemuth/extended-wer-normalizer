@@ -5,18 +5,9 @@ from __future__ import annotations
 import re
 
 from jiwer import AbstractTransform
-from whisper_normalizer.basic import BasicTextNormalizer
-from whisper_normalizer.english import EnglishTextNormalizer
 
 # ---------------------------------------------------------------------------
-# Private singletons
-# ---------------------------------------------------------------------------
-
-_basic_normalizer = BasicTextNormalizer()
-_english_normalizer = EnglishTextNormalizer()
-
-# ---------------------------------------------------------------------------
-# Number normalization helpers (ported from aicpy)
+# Number normalization helpers
 # ---------------------------------------------------------------------------
 
 _DIGIT_WORDS: dict[str, str] = {
@@ -24,6 +15,9 @@ _DIGIT_WORDS: dict[str, str] = {
     "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
 }
 
+# Words that form part of compound numbers ("twenty one", "one hundred …").
+# A single-digit word adjacent to any of these is left as-is to avoid producing
+# mixed forms like "twenty 1".
 _COMPOSITIONAL_NUMBER_WORDS: frozenset[str] = frozenset({
     "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
     "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty",
@@ -31,36 +25,28 @@ _COMPOSITIONAL_NUMBER_WORDS: frozenset[str] = frozenset({
     "hundred", "thousand", "million", "billion", "trillion",
 })
 
-_DIGIT_WORD_RE = re.compile(
-    r"\b(" + "|".join(_DIGIT_WORDS) + r")\b",
-    re.IGNORECASE,
-)
-
 
 class ExpandDigitRuns(AbstractTransform):
     """Split runs of 2+ consecutive digits into space-separated single digits.
 
-    Preserves leading zeros that EnglishTextNormalizer would otherwise drop:
+    Preserves leading zeros and handles phone-number sequences:
       "0176"  → "0 1 7 6"
-      "$5.99" → unchanged (decimal digits not split to preserve currency patterns)
+      "5589"  → "5 5 8 9"
+      "5.99"  → unchanged  (decimal part after "." is not split)
     """
 
     def process_string(self, s: str) -> str:
-        # Lookbehind: skip runs following a decimal point or currency symbol.
-        # Lookahead: skip runs immediately before % or ordinal suffixes (st/nd/rd/th),
-        # which are handled by NormalizePercentages / NormalizeOrdinals later.
-        return re.sub(
-            r"(?<![.$€£¥₹])\d{2,}(?![%]|(?:st|nd|rd|th)\b)",
-            lambda m: " ".join(m.group()),
-            s,
-        )
+        # (?<!\.) avoids splitting decimal digits (e.g. the "99" in "5.99").
+        # Currency, % and ordinals are already converted to words upstream,
+        # so no extra lookahead is needed.
+        return re.sub(r"(?<!\.)\d{2,}", lambda m: " ".join(m.group()), s)
 
 
 class DigitWordsToChars(AbstractTransform):
     """Convert isolated single-digit words (zero–nine) to digit characters.
 
     Leaves digit words adjacent to compositional number words (twenty, hundred…)
-    so EnglishTextNormalizer can compose compound numbers correctly.
+    unchanged to avoid producing inconsistent mixed forms like "twenty 1".
     """
 
     def process_string(self, s: str) -> str:
@@ -81,39 +67,10 @@ class DigitWordsToChars(AbstractTransform):
         return " ".join(out)
 
 
-class WhisperEnglishNormalize(AbstractTransform):
-    """Apply OpenAI Whisper's EnglishTextNormalizer.
-
-    Handles lowercase, punctuation removal, contraction expansion, and
-    compound number words ("twenty one" → "21").
-    """
-
-    def process_string(self, s: str) -> str:
-        return _english_normalizer(s)
-
-
-class WhisperBasicNormalize(AbstractTransform):
-    """Apply OpenAI Whisper's BasicTextNormalizer (language-agnostic)."""
-
-    def process_string(self, s: str) -> str:
-        return _basic_normalizer(s)
-
-
-class FinalDigitWordCleanup(AbstractTransform):
-    """Unconditional regex sweep: convert any residual digit word to a digit.
-
-    Safe to use after EnglishTextNormalizer has resolved all compound numbers.
-    """
-
-    def process_string(self, s: str) -> str:
-        return _DIGIT_WORD_RE.sub(lambda m: _DIGIT_WORDS[m.group().lower()], s)
-
-
 # ---------------------------------------------------------------------------
 # Email normalization
 # ---------------------------------------------------------------------------
 
-# Match RFC-5321-ish local parts and domains before the normalizer lowercases
 _EMAIL_RE = re.compile(
     r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}",
 )
@@ -245,7 +202,6 @@ _ABBREVIATIONS: dict[str, str] = {
     "dec.": "december",
 }
 
-# Build a single regex that matches any abbreviation (case-insensitive, word boundary on left)
 _ABBREV_RE = re.compile(
     r"(?<!\w)(" + "|".join(re.escape(k) for k in _ABBREVIATIONS) + r")",
     re.IGNORECASE,
@@ -266,7 +222,6 @@ class ExpandAbbreviations(AbstractTransform):
 # Symbol normalization
 # ---------------------------------------------------------------------------
 
-# Order matters: longer tokens first, and don't match inside emails/URLs
 _SYMBOL_MAP: list[tuple[str, str]] = [
     ("&amp;", "and"),
     ("&", "and"),
@@ -309,7 +264,6 @@ _CURRENCY_SYMBOLS: dict[str, tuple[str, str]] = {
 _CURRENCY_RE = re.compile(
     r"([$€£¥₹])\s*(\d+)(?:\.(\d{1,2}))?",
 )
-
 
 _IRREGULAR_PLURALS: dict[str, str] = {"penny": "pennies", "paisa": "paise"}
 
@@ -369,11 +323,10 @@ class NormalizePercentages(AbstractTransform):
         from num2words import num2words
 
         def _replace(m: re.Match) -> str:  # type: ignore[type-arg]
-            val_str = m.group(1)
-            val = float(val_str)
+            val = float(m.group(1))
             if val == int(val):
-                return f"{num2words(int(val))} percent"
-            return f"{num2words(val)} percent"
+                return f"{num2words(int(val)).replace('-', ' ')} percent"
+            return f"{num2words(val).replace('-', ' ')} percent"
 
         return _PERCENT_RE.sub(_replace, s)
 
@@ -395,6 +348,6 @@ class NormalizeOrdinals(AbstractTransform):
         from num2words import num2words
 
         def _replace(m: re.Match) -> str:  # type: ignore[type-arg]
-            return num2words(int(m.group(1)), to="ordinal")
+            return num2words(int(m.group(1)), to="ordinal").replace("-", " ")
 
         return _ORDINAL_RE.sub(_replace, s)

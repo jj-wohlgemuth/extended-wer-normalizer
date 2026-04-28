@@ -14,7 +14,6 @@ from extended_wer_normalizer.transforms import (
     DigitWordsToChars,
     ExpandAbbreviations,
     ExpandDigitRuns,
-    FinalDigitWordCleanup,
     NormalizeCurrency,
     NormalizeEmails,
     NormalizeOrdinals,
@@ -22,7 +21,6 @@ from extended_wer_normalizer.transforms import (
     NormalizeSymbols,
     NormalizeURLs,
     RemoveFillerWords,
-    WhisperEnglishNormalize,
 )
 
 
