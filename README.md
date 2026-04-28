@@ -56,9 +56,6 @@ wer = jiwer.wer(reference, hypothesis, reference_transform=english_wer_pipeline,
 |---|---|
 | `ExpandDigitRuns` | `"0176"` → `"0 1 7 6"` |
 | `DigitWordsToChars` | `"zero one seven"` → `"0 1 7"` |
-| `WhisperEnglishNormalize` | lowercase, punctuation, contractions, compound numbers |
-| `WhisperBasicNormalize` | language-agnostic basic normalization |
-| `FinalDigitWordCleanup` | residual digit-word sweep after compound resolution |
 | `NormalizeEmails` | `"user@example.com"` → `"user at example dot com"` |
 | `NormalizeURLs` | `"https://example.com/path"` → `"example dot com"` |
 | `NormalizeCurrency` | `"$5.99"` → `"five dollars ninety nine cents"` |
@@ -71,18 +68,18 @@ wer = jiwer.wer(reference, hypothesis, reference_transform=english_wer_pipeline,
 
 ## Pipeline design
 
-The English pipeline applies transforms in an order that ensures idempotence and correct interaction with Whisper's `EnglishTextNormalizer`:
+The English pipeline applies transforms left-to-right in a single pass:
 
-1. **Pre-Whisper**: email, URL, symbol, abbreviation (patterns Whisper would mangle)
-2. **Digit preparation**: expand digit runs, convert digit words
-3. **Core**: `WhisperEnglishNormalize` (lowercase, punctuation, contractions, compound numbers → digits)
-4. **Post-Whisper**: digit run expansion, digit word cleanup, currency, percentage, ordinal (patterns Whisper preserves or compacts)
-5. **Cleanup**: filler words, repetition collapse
+1. **Pattern-specific** (before punctuation is stripped): email, URL, symbol, abbreviation, currency, percentage, ordinal
+2. **Core**: contractions (`I'm` → `i am`), lowercase, punctuation removal
+3. **Digit normalization**: expand digit runs (`0176` → `0 1 7 6`), convert digit words (`zero` → `0`)
+4. **Cleanup**: filler words, repetition collapse
 
 ## Non-English
 
-For non-English text, pass `language` to get Whisper's `BasicTextNormalizer`:
+For non-English text, pass any `language` value other than `"en"` to apply a minimal language-agnostic pipeline (lowercase, punctuation removal, whitespace normalization):
 
 ```python
 normalize_for_wer("Das kostet fünf Euro", language="de")
+# → "das kostet fünf euro"
 ```
