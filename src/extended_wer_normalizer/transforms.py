@@ -11,19 +11,47 @@ from jiwer import AbstractTransform
 # ---------------------------------------------------------------------------
 
 _DIGIT_WORDS: dict[str, str] = {
-    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
-    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
 }
 
 # Words that form part of compound numbers ("twenty one", "one hundred …").
 # A single-digit word adjacent to any of these is left as-is to avoid producing
 # mixed forms like "twenty 1".
-_COMPOSITIONAL_NUMBER_WORDS: frozenset[str] = frozenset({
-    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-    "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty",
-    "fifty", "sixty", "seventy", "eighty", "ninety",
-    "hundred", "thousand", "million", "billion", "trillion",
-})
+_COMPOSITIONAL_NUMBER_WORDS: frozenset[str] = frozenset(
+    {
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "hundred",
+        "thousand",
+        "million",
+        "billion",
+        "trillion",
+    }
+)
 
 
 class ExpandDigitRuns(AbstractTransform):
@@ -36,10 +64,10 @@ class ExpandDigitRuns(AbstractTransform):
     """
 
     def process_string(self, s: str) -> str:
-        # (?<!\.) avoids splitting decimal digits (e.g. the "99" in "5.99").
-        # Currency, % and ordinals are already converted to words upstream,
-        # so no extra lookahead is needed.
-        return re.sub(r"(?<!\.)\d{2,}", lambda m: " ".join(m.group()), s)
+        # (?<![.\d]) skips digit runs preceded by "." or another digit,
+        # which protects ALL decimal digits in numbers like "5.99" and "3.14159".
+        # Currency, % and ordinals are already converted to words upstream.
+        return re.sub(r"(?<![.\d])\d{2,}", lambda m: " ".join(m.group()), s)
 
 
 class DigitWordsToChars(AbstractTransform):
@@ -56,11 +84,16 @@ class DigitWordsToChars(AbstractTransform):
             bare = word.lower().rstrip(".,!?;:")
             if bare in _DIGIT_WORDS:
                 left = words[i - 1].lower().rstrip(".,!?;:") if i > 0 else ""
-                right = words[i + 1].lower().rstrip(".,!?;:") if i < len(words) - 1 else ""
-                if left in _COMPOSITIONAL_NUMBER_WORDS or right in _COMPOSITIONAL_NUMBER_WORDS:
+                right = (
+                    words[i + 1].lower().rstrip(".,!?;:") if i < len(words) - 1 else ""
+                )
+                if (
+                    left in _COMPOSITIONAL_NUMBER_WORDS
+                    or right in _COMPOSITIONAL_NUMBER_WORDS
+                ):
                     out.append(word)
                 else:
-                    punct = word[len(word.rstrip(".,!?;:")):]
+                    punct = word[len(word.rstrip(".,!?;:")) :]
                     out.append(_DIGIT_WORDS[bare] + punct)
             else:
                 out.append(word)

@@ -5,15 +5,13 @@ Additional tests cover email, URL, filler, abbreviation, currency, ordinal,
 percentage, and symbol normalizations.
 """
 
-import pytest
 import jiwer
+import pytest
 
-from extended_wer_normalizer import normalize_for_wer, english_wer_pipeline
+from extended_wer_normalizer import normalize_for_wer
 from extended_wer_normalizer.transforms import (
     CollapseRepetitions,
-    DigitWordsToChars,
     ExpandAbbreviations,
-    ExpandDigitRuns,
     NormalizeCurrency,
     NormalizeEmails,
     NormalizeOrdinals,
@@ -22,7 +20,6 @@ from extended_wer_normalizer.transforms import (
     NormalizeURLs,
     RemoveFillerWords,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -66,7 +63,10 @@ def test_number_normalization_produces_equal_strings(a, b):
 @pytest.mark.parametrize(
     "ref, hyp",
     [
-        ("0176. 4151. 5589", "zero one seven six four one five one five five eight nine"),
+        (
+            "0176. 4151. 5589",
+            "zero one seven six four one five one five five eight nine",
+        ),
         ("0176. 4151. 5589", "0 1 7 6 4 1 5 1 5 5 8 9"),
         ("01715589", "zero one seven one five five eight nine"),
         ("1 2 3 4 5", "One Two Three Four Five"),
@@ -116,8 +116,16 @@ def test_equivalent_number_formats_have_zero_wer(ref, hyp):
             "zero one seven six four one five two five five eight nine",
             "one digit swapped",
         ),
-        ("0178 One. Two. Three.", "zero one seven eight one two four", "last word-digit wrong"),
-        ("0178 One. Two. Three.", "zero one seven nine one two three", "one digit in block wrong"),
+        (
+            "0178 One. Two. Three.",
+            "zero one seven eight one two four",
+            "last word-digit wrong",
+        ),
+        (
+            "0178 One. Two. Three.",
+            "zero one seven nine one two three",
+            "one digit in block wrong",
+        ),
     ],
 )
 def test_actual_errors_have_nonzero_wer(ref, hyp, description):
@@ -401,3 +409,174 @@ def test_full_pipeline_idempotent(text):
     once = normalize_for_wer(text)
     twice = normalize_for_wer(once)
     assert once == twice, f"Not idempotent:\n  once:  {once!r}\n  twice: {twice!r}"
+
+
+# ===========================================================================
+# EDGE CASES
+# ===========================================================================
+
+
+def test_empty_string():
+    assert normalize_for_wer("") == ""
+
+
+def test_whitespace_only():
+    assert normalize_for_wer("   ") == ""
+
+
+def test_single_digit_unchanged():
+    from extended_wer_normalizer.transforms import ExpandDigitRuns
+
+    t = ExpandDigitRuns()
+    assert t.process_string("5") == "5"
+
+
+def test_digit_run_already_separated():
+    from extended_wer_normalizer.transforms import ExpandDigitRuns
+
+    t = ExpandDigitRuns()
+    assert t.process_string("0 1 7 6") == "0 1 7 6"
+
+
+def test_decimal_digits_not_split():
+    from extended_wer_normalizer.transforms import ExpandDigitRuns
+
+    t = ExpandDigitRuns()
+    assert t.process_string("5.99") == "5.99"
+    assert t.process_string("3.14159") == "3.14159"
+
+
+def test_digit_words_mixed_case():
+    assert normalize_for_wer("ZERO ONE SEVEN SIX") == normalize_for_wer("0 1 7 6")
+
+
+def test_digit_word_preserves_adjacent_punctuation():
+    from extended_wer_normalizer.transforms import DigitWordsToChars
+
+    t = DigitWordsToChars()
+    assert t.process_string("one.") == "1."
+    assert t.process_string("two,") == "2,"
+
+
+def test_compound_number_left_intact():
+    """Words adjacent to compositional number words are not converted."""
+    from extended_wer_normalizer.transforms import DigitWordsToChars
+
+    t = DigitWordsToChars()
+    assert t.process_string("twenty one") == "twenty one"
+    assert t.process_string("one hundred") == "one hundred"
+
+
+def test_email_no_match_unchanged():
+    t = NormalizeEmails()
+    assert t.process_string("hello world") == "hello world"
+
+
+def test_url_no_match_unchanged():
+    t = NormalizeURLs()
+    assert t.process_string("visit the website") == "visit the website"
+
+
+def test_filler_consecutive():
+    t = RemoveFillerWords()
+    assert t.process_string("um uh yeah") == "yeah"
+
+
+def test_collapse_three_repetitions():
+    from extended_wer_normalizer.transforms import CollapseRepetitions
+
+    t = CollapseRepetitions()
+    assert t.process_string("yes yes yes") == "yes"
+
+
+def test_collapse_mixed_case_repetitions():
+    from extended_wer_normalizer.transforms import CollapseRepetitions
+
+    t = CollapseRepetitions()
+    assert t.process_string("Yes yes YES") == "Yes"
+
+
+def test_currency_zero_major():
+    t = NormalizeCurrency()
+    assert "zero" in t.process_string("$0")
+
+
+def test_currency_no_minor_when_zero():
+    t = NormalizeCurrency()
+    result = t.process_string("$5.00")
+    assert "five dollars" in result
+    assert "cent" not in result
+
+
+def test_ordinal_large():
+    t = NormalizeOrdinals()
+    result = t.process_string("100th anniversary")
+    assert "hundredth" in result
+
+
+def test_percentage_zero():
+    t = NormalizePercentages()
+    assert "zero percent" in t.process_string("0%")
+
+
+def test_percentage_decimal():
+    t = NormalizePercentages()
+    result = t.process_string("3.5%")
+    assert "percent" in result
+
+
+# ===========================================================================
+# NON-ENGLISH PATH
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "text, language, expected_fragment",
+    [
+        ("Bonjour monde!", "fr", "bonjour monde"),
+        ("Das ist gut.", "de", "das ist gut"),
+        ("HELLO WORLD", "es", "hello world"),
+    ],
+)
+def test_non_english_lowercases_and_strips_punctuation(text, language, expected_fragment):
+    assert normalize_for_wer(text, language=language) == expected_fragment
+
+
+# ===========================================================================
+# JIWER PIPELINE INTEGRATION
+# ===========================================================================
+
+
+def test_english_pipeline_usable_with_jiwer_wer():
+    """english_wer_pipeline + ReduceToListOfListOfWords can be used with jiwer.wer."""
+    from extended_wer_normalizer import english_wer_pipeline
+
+    # english_wer_pipeline produces strings; append word-reduction for jiwer.wer
+    complete = jiwer.Compose([english_wer_pipeline, jiwer.ReduceToListOfListOfWords()])
+    score = jiwer.wer(
+        "0176",
+        "zero one seven six",
+        reference_transform=complete,
+        hypothesis_transform=complete,
+    )
+    assert score == 0.0
+
+
+def test_transforms_composable_with_jiwer_builtins():
+    """Individual transforms can be freely mixed with jiwer built-ins."""
+    from extended_wer_normalizer.transforms import ExpandDigitRuns
+
+    pipeline = jiwer.Compose(
+        [
+            ExpandDigitRuns(),
+            jiwer.ToLowerCase(),
+            jiwer.RemovePunctuation(),
+            jiwer.RemoveMultipleSpaces(),
+            jiwer.Strip(),
+            jiwer.ReduceToListOfListOfWords(),
+        ]
+    )
+    score = jiwer.wer(
+        "0 1 7 6", "0176", reference_transform=pipeline, hypothesis_transform=pipeline
+    )
+    assert score == 0.0

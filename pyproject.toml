@@ -36,4 +36,15 @@ Homepage = "https://github.com/jj-wohlgemuth/extended-wer-normalizer"
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "ruff>=0.15.12",
+    "ty>=0.0.33",
 ]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

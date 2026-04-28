@@ -34,28 +34,30 @@ __all__ = [
     "RemoveFillerWords",
 ]
 
-english_wer_pipeline = jiwer.Compose([
-    # Pattern-specific normalizations run first, before punctuation is stripped
-    NormalizeEmails(),                          # user@x.com → user at x dot com
-    NormalizeURLs(),                            # https://x.com → x dot com
-    NormalizeSymbols(),                         # & → and  (before RemovePunctuation drops &)
-    ExpandAbbreviations(),                      # Dr. → doctor  (before punct removal)
-    NormalizeCurrency(),                        # $5.99 → five dollars ninety nine cents
-    NormalizePercentages(),                     # 50% → fifty percent
-    NormalizeOrdinals(),                        # 1st → first
-    # Core text normalization
-    jiwer.ExpandCommonEnglishContractions(),    # I'm → i am
-    jiwer.ToLowerCase(),
-    jiwer.RemovePunctuation(),
-    # Digit normalization
-    ExpandDigitRuns(),                          # "0176" → "0 1 7 6"
-    DigitWordsToChars(),                        # "zero one" → "0 1"
-    jiwer.RemoveMultipleSpaces(),
-    jiwer.Strip(),
-    # Speech artifact cleanup
-    RemoveFillerWords(),                        # um, uh, hmm, …
-    CollapseRepetitions(),                      # I I I → I
-])
+english_wer_pipeline = jiwer.Compose(
+    [
+        # Pattern-specific normalizations run first, before punctuation is stripped
+        NormalizeEmails(),  # user@x.com → user at x dot com
+        NormalizeURLs(),  # https://x.com → x dot com
+        NormalizeSymbols(),  # & → and  (before RemovePunctuation drops &)
+        ExpandAbbreviations(),  # Dr. → doctor  (before punct removal)
+        NormalizeCurrency(),  # $5.99 → five dollars ninety nine cents
+        NormalizePercentages(),  # 50% → fifty percent
+        NormalizeOrdinals(),  # 1st → first
+        # Core text normalization
+        jiwer.ExpandCommonEnglishContractions(),  # I'm → i am
+        jiwer.ToLowerCase(),
+        jiwer.RemovePunctuation(),
+        # Digit normalization
+        ExpandDigitRuns(),  # "0176" → "0 1 7 6"
+        DigitWordsToChars(),  # "zero one" → "0 1"
+        jiwer.RemoveMultipleSpaces(),
+        jiwer.Strip(),
+        # Speech artifact cleanup
+        RemoveFillerWords(),  # um, uh, hmm, …
+        CollapseRepetitions(),  # I I I → I
+    ]
+)
 
 
 def normalize_for_wer(text: str, language: str = "en") -> str:
@@ -77,10 +79,12 @@ def normalize_for_wer(text: str, language: str = "en") -> str:
         result = english_wer_pipeline([text])
         return result[0].strip()
     # Minimal language-agnostic normalization
-    pipeline = jiwer.Compose([
-        jiwer.ToLowerCase(),
-        jiwer.RemovePunctuation(),
-        jiwer.RemoveMultipleSpaces(),
-        jiwer.Strip(),
-    ])
+    pipeline = jiwer.Compose(
+        [
+            jiwer.ToLowerCase(),
+            jiwer.RemovePunctuation(),
+            jiwer.RemoveMultipleSpaces(),
+            jiwer.Strip(),
+        ]
+    )
     return pipeline([text])[0].strip()
