@@ -7,7 +7,7 @@ packages = ["src/extended_wer_normalizer"]
 
 [project]
 name = "extended-wer-normalizer"
-version = "0.2.0"
+version = "0.2.1"
 description = "jiwer-compatible WER normalizer with number, email, URL, filler, and symbol normalization for voice AI evaluation"
 readme = "README.md"
 requires-python = ">=3.10"
