@@ -84,13 +84,8 @@ class DigitWordsToChars(AbstractTransform):
             bare = word.lower().rstrip(".,!?;:")
             if bare in _DIGIT_WORDS:
                 left = words[i - 1].lower().rstrip(".,!?;:") if i > 0 else ""
-                right = (
-                    words[i + 1].lower().rstrip(".,!?;:") if i < len(words) - 1 else ""
-                )
-                if (
-                    left in _COMPOSITIONAL_NUMBER_WORDS
-                    or right in _COMPOSITIONAL_NUMBER_WORDS
-                ):
+                right = words[i + 1].lower().rstrip(".,!?;:") if i < len(words) - 1 else ""
+                if left in _COMPOSITIONAL_NUMBER_WORDS or right in _COMPOSITIONAL_NUMBER_WORDS:
                     out.append(word)
                 else:
                     punct = word[len(word.rstrip(".,!?;:")) :]
