@@ -1,4 +1,9 @@
-"""jiwer-compatible AbstractTransform subclasses for WER normalization."""
+"""jiwer-compatible AbstractTransform subclasses for WER normalization.
+
+Every transform that needs language-specific data accepts `language="en"` and
+reads its lexicon from `extended_wer_normalizer.languages.get_language_data`.
+The English defaults preserve the package's pre-0.3 behavior bit-for-bit.
+"""
 
 from __future__ import annotations
 
@@ -6,52 +11,11 @@ import re
 
 from jiwer import AbstractTransform
 
-# ---------------------------------------------------------------------------
-# Number normalization helpers
-# ---------------------------------------------------------------------------
+from .languages import get_language_data
 
-_DIGIT_WORDS: dict[str, str] = {
-    "zero": "0",
-    "one": "1",
-    "two": "2",
-    "three": "3",
-    "four": "4",
-    "five": "5",
-    "six": "6",
-    "seven": "7",
-    "eight": "8",
-    "nine": "9",
-}
-
-# Words that form part of compound numbers ("twenty one", "one hundred …").
-# A single-digit word adjacent to any of these is left as-is to avoid producing
-# mixed forms like "twenty 1".
-_COMPOSITIONAL_NUMBER_WORDS: frozenset[str] = frozenset(
-    {
-        "eleven",
-        "twelve",
-        "thirteen",
-        "fourteen",
-        "fifteen",
-        "sixteen",
-        "seventeen",
-        "eighteen",
-        "nineteen",
-        "twenty",
-        "thirty",
-        "forty",
-        "fifty",
-        "sixty",
-        "seventy",
-        "eighty",
-        "ninety",
-        "hundred",
-        "thousand",
-        "million",
-        "billion",
-        "trillion",
-    }
-)
+# ---------------------------------------------------------------------------
+# Number normalization
+# ---------------------------------------------------------------------------
 
 
 class ExpandDigitRuns(AbstractTransform):
@@ -61,35 +25,41 @@ class ExpandDigitRuns(AbstractTransform):
       "0176"  → "0 1 7 6"
       "5589"  → "5 5 8 9"
       "5.99"  → unchanged  (decimal part after "." is not split)
+
+    Language-agnostic.
     """
 
     def process_string(self, s: str) -> str:
-        # (?<![.\d]) skips digit runs preceded by "." or another digit,
-        # which protects ALL decimal digits in numbers like "5.99" and "3.14159".
-        # Currency, % and ordinals are already converted to words upstream.
-        return re.sub(r"(?<![.\d])\d{2,}", lambda m: " ".join(m.group()), s)
+        # (?<![.,\d]) skips digit runs preceded by "." or "," (decimal separators
+        # in either English or continental notation) or another digit.
+        return re.sub(r"(?<![.,\d])\d{2,}", lambda m: " ".join(m.group()), s)
 
 
 class DigitWordsToChars(AbstractTransform):
-    """Convert isolated single-digit words (zero–nine) to digit characters.
+    """Convert isolated single-digit words to digit characters.
 
     Leaves digit words adjacent to compositional number words (twenty, hundred…)
     unchanged to avoid producing inconsistent mixed forms like "twenty 1".
     """
+
+    def __init__(self, language: str = "en") -> None:
+        data = get_language_data(language)
+        self._digit_words = data.digit_words
+        self._compositional = data.compositional_number_words
 
     def process_string(self, s: str) -> str:
         words = s.split()
         out: list[str] = []
         for i, word in enumerate(words):
             bare = word.lower().rstrip(".,!?;:")
-            if bare in _DIGIT_WORDS:
+            if bare in self._digit_words:
                 left = words[i - 1].lower().rstrip(".,!?;:") if i > 0 else ""
                 right = words[i + 1].lower().rstrip(".,!?;:") if i < len(words) - 1 else ""
-                if left in _COMPOSITIONAL_NUMBER_WORDS or right in _COMPOSITIONAL_NUMBER_WORDS:
+                if left in self._compositional or right in self._compositional:
                     out.append(word)
                 else:
                     punct = word[len(word.rstrip(".,!?;:")) :]
-                    out.append(_DIGIT_WORDS[bare] + punct)
+                    out.append(self._digit_words[bare] + punct)
             else:
                 out.append(word)
         return " ".join(out)
@@ -104,29 +74,30 @@ _EMAIL_RE = re.compile(
 )
 
 
-def _email_to_words(match: re.Match) -> str:  # type: ignore[type-arg]
-    email = match.group()
-    local, domain = email.split("@", 1)
-
-    def _expand(part: str) -> str:
-        part = re.sub(r"\.", " dot ", part)
-        part = re.sub(r"-", " dash ", part)
-        part = re.sub(r"\+", " plus ", part)
-        part = re.sub(r"_", " underscore ", part)
-        return part
-
-    return _expand(local) + " at " + _expand(domain)
-
-
 class NormalizeEmails(AbstractTransform):
     """Convert email addresses to spoken-word form.
 
-    Example: user.name+tag@sub.example.com
+    English example: user.name+tag@sub.example.com
       → "user dot name plus tag at sub dot example dot com"
     """
 
+    def __init__(self, language: str = "en") -> None:
+        self._lex = get_language_data(language).email_lexicon
+
+    def _expand(self, part: str) -> str:
+        part = re.sub(r"\.", f" {self._lex['dot']} ", part)
+        part = re.sub(r"-", f" {self._lex['dash']} ", part)
+        part = re.sub(r"\+", f" {self._lex['plus']} ", part)
+        part = re.sub(r"_", f" {self._lex['underscore']} ", part)
+        return part
+
     def process_string(self, s: str) -> str:
-        return _EMAIL_RE.sub(_email_to_words, s)
+        def _sub(match: re.Match[str]) -> str:
+            email = match.group()
+            local, domain = email.split("@", 1)
+            return f"{self._expand(local)} {self._lex['at']} {self._expand(domain)}"
+
+        return _EMAIL_RE.sub(_sub, s)
 
 
 # ---------------------------------------------------------------------------
@@ -138,43 +109,43 @@ _URL_RE = re.compile(
 )
 
 
-def _url_to_words(match: re.Match) -> str:  # type: ignore[type-arg]
-    domain = match.group(1)
-    domain = re.sub(r"\.", " dot ", domain)
-    domain = re.sub(r"-", " dash ", domain)
-    return domain.strip()
-
-
 class NormalizeURLs(AbstractTransform):
     """Convert URLs to their spoken domain form, dropping scheme and path.
 
-    Example: "https://www.example-site.com/some/path?q=1" → "example dash site dot com"
+    English example: "https://www.example-site.com/some/path?q=1" → "example dash site dot com"
     """
 
+    def __init__(self, language: str = "en") -> None:
+        self._lex = get_language_data(language).url_lexicon
+
     def process_string(self, s: str) -> str:
-        return _URL_RE.sub(_url_to_words, s)
+        def _sub(match: re.Match[str]) -> str:
+            domain = match.group(1)
+            domain = re.sub(r"\.", f" {self._lex['dot']} ", domain)
+            domain = re.sub(r"-", f" {self._lex['dash']} ", domain)
+            return domain.strip()
+
+        return _URL_RE.sub(_sub, s)
 
 
 # ---------------------------------------------------------------------------
 # Filler words & stutter/repetition
 # ---------------------------------------------------------------------------
 
-_FILLER_RE = re.compile(
-    r"\b(um+|uh+|hmm+|hm+|mm+|er+|ah+|eh+|mhm+|erm+)\b",
-    re.IGNORECASE,
-)
-
 _MULTI_SPACE_RE = re.compile(r" {2,}")
 
 
 class RemoveFillerWords(AbstractTransform):
-    """Remove spoken filler words (um, uh, hmm, er, ah, …).
+    """Remove spoken filler words (language-specific patterns).
 
     Common in spontaneous speech and often transcribed by ASR models.
     """
 
+    def __init__(self, language: str = "en") -> None:
+        self._filler_re = get_language_data(language).filler_re
+
     def process_string(self, s: str) -> str:
-        s = _FILLER_RE.sub("", s)
+        s = self._filler_re.sub("", s)
         return _MULTI_SPACE_RE.sub(" ", s).strip()
 
 
@@ -183,6 +154,7 @@ class CollapseRepetitions(AbstractTransform):
 
     Models ASR output stuttering: "I I I think" → "I think".
     Case-insensitive comparison; preserves the first occurrence's casing.
+    Language-agnostic.
     """
 
     def process_string(self, s: str) -> str:
@@ -200,68 +172,33 @@ class CollapseRepetitions(AbstractTransform):
 # Abbreviation expansion
 # ---------------------------------------------------------------------------
 
-_ABBREVIATIONS: dict[str, str] = {
-    "dr.": "doctor",
-    "mr.": "mister",
-    "mrs.": "missus",
-    "ms.": "miss",
-    "prof.": "professor",
-    "sr.": "senior",
-    "jr.": "junior",
-    "vs.": "versus",
-    "etc.": "et cetera",
-    "approx.": "approximately",
-    "dept.": "department",
-    "est.": "established",
-    "inc.": "incorporated",
-    "ltd.": "limited",
-    "corp.": "corporation",
-    "ave.": "avenue",
-    "blvd.": "boulevard",
-    "st.": "street",
-    "jan.": "january",
-    "feb.": "february",
-    "mar.": "march",
-    "apr.": "april",
-    "aug.": "august",
-    "sep.": "september",
-    "oct.": "october",
-    "nov.": "november",
-    "dec.": "december",
-}
-
-_ABBREV_RE = re.compile(
-    r"(?<!\w)(" + "|".join(re.escape(k) for k in _ABBREVIATIONS) + r")",
-    re.IGNORECASE,
-)
-
 
 class ExpandAbbreviations(AbstractTransform):
     """Expand common spoken abbreviations to their full form.
 
-    Examples: "Dr. Smith" → "doctor Smith", "vs." → "versus"
+    English examples: "Dr. Smith" → "doctor Smith", "vs." → "versus"
     """
 
+    def __init__(self, language: str = "en") -> None:
+        data = get_language_data(language)
+        self._abbreviations = data.abbreviations
+        if data.abbreviations:
+            self._re: re.Pattern[str] | None = re.compile(
+                r"(?<!\w)(" + "|".join(re.escape(k) for k in data.abbreviations) + r")",
+                re.IGNORECASE,
+            )
+        else:
+            self._re = None
+
     def process_string(self, s: str) -> str:
-        return _ABBREV_RE.sub(lambda m: _ABBREVIATIONS[m.group().lower()], s)
+        if self._re is None:
+            return s
+        return self._re.sub(lambda m: self._abbreviations[m.group().lower()], s)
 
 
 # ---------------------------------------------------------------------------
 # Symbol normalization
 # ---------------------------------------------------------------------------
-
-_SYMBOL_MAP: list[tuple[str, str]] = [
-    ("&amp;", "and"),
-    ("&", "and"),
-    (" + ", " plus "),
-    (" @ ", " at "),
-    (" # ", " number "),
-    (" * ", " times "),
-    (" = ", " equals "),
-    (" > ", " greater than "),
-    (" < ", " less than "),
-    ("...", " "),
-]
 
 
 class NormalizeSymbols(AbstractTransform):
@@ -271,8 +208,11 @@ class NormalizeSymbols(AbstractTransform):
     or text boundaries) to avoid corrupting emails and URLs.
     """
 
+    def __init__(self, language: str = "en") -> None:
+        self._symbol_map = get_language_data(language).symbol_map
+
     def process_string(self, s: str) -> str:
-        for symbol, word in _SYMBOL_MAP:
+        for symbol, word in self._symbol_map:
             s = s.replace(symbol, word)
         return s
 
@@ -281,80 +221,87 @@ class NormalizeSymbols(AbstractTransform):
 # Currency normalization
 # ---------------------------------------------------------------------------
 
-_CURRENCY_SYMBOLS: dict[str, tuple[str, str]] = {
-    "$": ("dollar", "cent"),
-    "€": ("euro", "cent"),
-    "£": ("pound", "penny"),
-    "¥": ("yen", ""),
-    "₹": ("rupee", "paisa"),
-}
-
+# Accept either "." or "," as decimal separator so French "5,99 €" and
+# English "$5.99" both parse. The integer-part regex captures one currency symbol
+# and the digits to either side of an optional fractional separator.
 _CURRENCY_RE = re.compile(
-    r"([$€£¥₹])\s*(\d+)(?:\.(\d{1,2}))?",
+    r"([$€£¥₹])\s*(\d+)(?:[.,](\d{1,2}))?",
 )
 
-_IRREGULAR_PLURALS: dict[str, str] = {"penny": "pennies", "paisa": "paise"}
 
-
-def _pluralize(unit: str, count: int) -> str:
+def _pluralize(unit: str, count: int, plurals: dict[str, str]) -> str:
     if count == 1:
         return unit
-    return _IRREGULAR_PLURALS.get(unit, unit + "s")
-
-
-def _currency_to_words(match: re.Match) -> str:  # type: ignore[type-arg]
-    from num2words import num2words
-
-    symbol = match.group(1)
-    major = int(match.group(2))
-    minor_str = match.group(3)
-    unit_major, unit_minor = _CURRENCY_SYMBOLS.get(symbol, ("dollar", "cent"))
-
-    def n2w(n: int) -> str:
-        return num2words(n).replace("-", " ")
-
-    parts = [f"{n2w(major)} {_pluralize(unit_major, major)}"]
-    if minor_str:
-        minor = int(minor_str.ljust(2, "0"))
-        if minor > 0 and unit_minor:
-            parts.append(f"{n2w(minor)} {_pluralize(unit_minor, minor)}")
-    return " ".join(parts)
+    return plurals.get(unit, unit + "s")
 
 
 class NormalizeCurrency(AbstractTransform):
     """Convert currency amounts to spoken form.
 
-    Examples:
+    English examples:
       "$5"    → "five dollars"
       "$5.99" → "five dollars ninety nine cents"
       "€3.50" → "three euros fifty cents"
     """
 
+    def __init__(self, language: str = "en") -> None:
+        data = get_language_data(language)
+        self._language = language
+        self._symbols = data.currency_symbols
+        self._plurals = data.currency_plurals
+
     def process_string(self, s: str) -> str:
-        return _CURRENCY_RE.sub(_currency_to_words, s)
+        from num2words import num2words
+
+        def n2w(n: int) -> str:
+            return num2words(n, lang=self._language).replace("-", " ")
+
+        def _sub(match: re.Match[str]) -> str:
+            symbol = match.group(1)
+            major = int(match.group(2))
+            minor_str = match.group(3)
+            unit_major, unit_minor = self._symbols.get(symbol, ("dollar", "cent"))
+
+            parts = [f"{n2w(major)} {_pluralize(unit_major, major, self._plurals)}"]
+            if minor_str:
+                minor = int(minor_str.ljust(2, "0"))
+                if minor > 0 and unit_minor:
+                    parts.append(f"{n2w(minor)} {_pluralize(unit_minor, minor, self._plurals)}")
+            return " ".join(parts)
+
+        return _CURRENCY_RE.sub(_sub, s)
 
 
 # ---------------------------------------------------------------------------
 # Percentage normalization
 # ---------------------------------------------------------------------------
 
-_PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+# Accept either "." or "," as decimal separator (French uses comma).
+_PERCENT_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*%")
 
 
 class NormalizePercentages(AbstractTransform):
     """Convert percentage notation to spoken form.
 
-    Examples: "50%" → "fifty percent", "3.5%" → "three point five percent"
+    English examples: "50%" → "fifty percent", "3.5%" → "three point five percent"
+    French: "3,5%" → "trois virgule cinq pour cent"
     """
+
+    def __init__(self, language: str = "en") -> None:
+        self._language = language
+        self._word = get_language_data(language).word_for_percent
 
     def process_string(self, s: str) -> str:
         from num2words import num2words
 
-        def _replace(m: re.Match) -> str:  # type: ignore[type-arg]
-            val = float(m.group(1))
+        def _replace(m: re.Match[str]) -> str:
+            raw = m.group(1).replace(",", ".")
+            val = float(raw)
             if val == int(val):
-                return f"{num2words(int(val)).replace('-', ' ')} percent"
-            return f"{num2words(val).replace('-', ' ')} percent"
+                spoken = num2words(int(val), lang=self._language)
+            else:
+                spoken = num2words(val, lang=self._language)
+            return f"{spoken.replace('-', ' ')} {self._word}"
 
         return _PERCENT_RE.sub(_replace, s)
 
@@ -363,19 +310,49 @@ class NormalizePercentages(AbstractTransform):
 # Ordinal normalization
 # ---------------------------------------------------------------------------
 
-_ORDINAL_RE = re.compile(r"\b(\d+)(st|nd|rd|th)\b", re.IGNORECASE)
-
 
 class NormalizeOrdinals(AbstractTransform):
     """Convert ordinal numerals to spoken word form.
 
-    Examples: "1st" → "first", "2nd" → "second", "15th" → "fifteenth"
+    English: "1st" → "first", "15th" → "fifteenth"
+    German:  "1. Januar" → "erste januar"
+    French:  "1er" → "premier", "2e" → "deuxième"
     """
+
+    def __init__(self, language: str = "en") -> None:
+        self._language = language
+        self._re = get_language_data(language).ordinal_re
 
     def process_string(self, s: str) -> str:
         from num2words import num2words
 
-        def _replace(m: re.Match) -> str:  # type: ignore[type-arg]
-            return num2words(int(m.group(1)), to="ordinal").replace("-", " ")
+        def _replace(m: re.Match[str]) -> str:
+            spoken = num2words(int(m.group(1)), to="ordinal", lang=self._language)
+            return spoken.replace("-", " ")
 
-        return _ORDINAL_RE.sub(_replace, s)
+        return self._re.sub(_replace, s)
+
+
+# ---------------------------------------------------------------------------
+# French elision contractions
+# ---------------------------------------------------------------------------
+
+# Matches the common French elision prefixes followed by an apostrophe
+# (ASCII or typographic). Maps "j'aime" → "j aime", mirroring what
+# jiwer.ExpandCommonEnglishContractions does for English contractions.
+_FR_ELISIONS_RE = re.compile(
+    r"\b(l|d|n|s|m|t|j|c|qu|jusqu|lorsqu|puisqu|quoiqu)['’]",
+    re.IGNORECASE,
+)
+
+
+class ExpandFrenchElisions(AbstractTransform):
+    """Expand French elision contractions: j'aime → j aime, l'eau → l eau.
+
+    The contracted prefix is split off the following word with a space so that
+    ASR output (which often expands or omits the apostrophe) aligns with the
+    reference. Matches both ASCII (') and typographic (’) apostrophes.
+    """
+
+    def process_string(self, s: str) -> str:
+        return _FR_ELISIONS_RE.sub(lambda m: m.group(1) + " ", s)

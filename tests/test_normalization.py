@@ -580,3 +580,460 @@ def test_transforms_composable_with_jiwer_builtins():
         "0 1 7 6", "0176", reference_transform=pipeline, hypothesis_transform=pipeline
     )
     assert score == 0.0
+
+
+# ===========================================================================
+# LANGUAGE REGISTRY
+# ===========================================================================
+
+
+def test_supported_languages_registry():
+    from extended_wer_normalizer import supported_languages
+
+    assert supported_languages() == ["de", "en", "fr"]
+
+
+def test_unsupported_language_for_full_pipeline_falls_back_to_minimal():
+    # Spanish has no full pipeline; minimal lowercase + punctuation removal applies.
+    assert normalize_for_wer("HOLA, ¿qué tal?", language="es") == "hola qué tal"
+
+
+def test_get_language_data_raises_on_unknown_code():
+    from extended_wer_normalizer.languages import get_language_data
+
+    with pytest.raises(ValueError, match="Unsupported language"):
+        get_language_data("xx")
+
+
+# ===========================================================================
+# GERMAN — full pipeline
+# ===========================================================================
+
+
+def wer_de(ref: str, hyp: str) -> float:
+    return jiwer.wer(
+        normalize_for_wer(ref, language="de"),
+        normalize_for_wer(hyp, language="de"),
+    )
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("Hr. Müller", "herr müller"),
+        ("Fr. Schmidt", "frau schmidt"),
+        ("Dr. Schulz", "doktor schulz"),
+        ("z.B. das Auto", "zum beispiel das auto"),
+        ("usw.", "und so weiter"),
+        ("ca. fünf", "circa fünf"),
+        ("d.h. niemand", "das heißt niemand"),
+        ("Str. 5", "straße 5"),
+    ],
+)
+def test_german_abbreviation_expansion(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import ExpandAbbreviations
+
+    t = ExpandAbbreviations(language="de")
+    result = t.process_string(input_text)
+    assert expected_fragment in result.lower(), f"{input_text!r} → {result!r}"
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("max@beispiel.de", "max at beispiel punkt de"),
+        ("info@ai-coustics.de", "info at ai bindestrich coustics punkt de"),
+    ],
+)
+def test_german_email_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeEmails
+
+    t = NormalizeEmails(language="de")
+    assert expected_fragment in t.process_string(input_text)
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("https://www.beispiel.de/x", "beispiel punkt de"),
+        ("https://my-site.de", "my bindestrich site punkt de"),
+    ],
+)
+def test_german_url_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeURLs
+
+    t = NormalizeURLs(language="de")
+    assert expected_fragment in t.process_string(input_text)
+
+
+@pytest.mark.parametrize(
+    "input_text, expected",
+    [
+        ("ähm hallo", "hallo"),
+        ("äh ja bitte", "ja bitte"),
+        ("hmm ich denke", "ich denke"),
+        ("tja schade", "schade"),
+        ("also gut", "gut"),
+    ],
+)
+def test_german_filler_removal(input_text, expected):
+    from extended_wer_normalizer.transforms import RemoveFillerWords
+
+    t = RemoveFillerWords(language="de")
+    assert t.process_string(input_text).strip() == expected
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("€5", "fünf euro"),
+        ("€3", "drei euro"),
+        ("$5", "fünf dollar"),
+    ],
+)
+def test_german_currency_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeCurrency
+
+    t = NormalizeCurrency(language="de")
+    result = t.process_string(input_text)
+    assert expected_fragment in result, f"{input_text!r} → {result!r}"
+
+
+def test_german_currency_no_plural_inflection():
+    """German currency units don't pluralize (Euro stays Euro)."""
+    from extended_wer_normalizer.transforms import NormalizeCurrency
+
+    t = NormalizeCurrency(language="de")
+    assert "euros" not in t.process_string("€5")
+    assert "dollars" not in t.process_string("$5")
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("50%", "fünfzig prozent"),
+        ("100%", "einhundert prozent"),
+        ("3,5%", "prozent"),  # comma-decimal accepted
+        ("3.5%", "prozent"),  # period-decimal also accepted
+    ],
+)
+def test_german_percentage_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizePercentages
+
+    t = NormalizePercentages(language="de")
+    result = t.process_string(input_text)
+    assert expected_fragment in result, f"{input_text!r} → {result!r}"
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("am 1. Januar treffen", "am erste Januar treffen"),
+        ("am 31. Dezember", "am einunddreißigste Dezember"),
+        ("100. Geburtstag", "hundertste Geburtstag"),
+    ],
+)
+def test_german_ordinal_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeOrdinals
+
+    t = NormalizeOrdinals(language="de")
+    result = t.process_string(input_text)
+    assert expected_fragment in result, f"{input_text!r} → {result!r}"
+
+
+def test_german_ordinal_does_not_match_decimals():
+    from extended_wer_normalizer.transforms import NormalizeOrdinals
+
+    t = NormalizeOrdinals(language="de")
+    # "1.5" is a decimal, not an ordinal — must stay untouched.
+    assert t.process_string("Wert: 1.5 Liter") == "Wert: 1.5 Liter"
+
+
+def test_german_ordinal_does_not_match_sentence_end():
+    from extended_wer_normalizer.transforms import NormalizeOrdinals
+
+    t = NormalizeOrdinals(language="de")
+    # Period followed by end-of-string is not an ordinal.
+    assert t.process_string("Es war 5.") == "Es war 5."
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("Katzen & Hunde", "katzen und hunde"),
+        ("rock & roll", "rock und roll"),
+    ],
+)
+def test_german_symbol_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeSymbols
+
+    t = NormalizeSymbols(language="de")
+    assert expected_fragment in t.process_string(input_text).lower()
+
+
+@pytest.mark.parametrize(
+    "ref, hyp",
+    [
+        ("Hr. Müller", "herr müller"),
+        ("Es kostet €5", "es kostet fünf euro"),
+        ("50% Rabatt", "fünfzig prozent rabatt"),
+        ("ähm ja", "ja"),
+        ("ich ich denke", "ich denke"),
+        ("am 1. Januar", "am erste Januar"),
+    ],
+)
+def test_german_zero_wer(ref, hyp):
+    score = wer_de(ref, hyp)
+    assert score == 0.0, (
+        f"WER={score} (expected 0.0)\n"
+        f"  ref: {ref!r} → {normalize_for_wer(ref, language='de')!r}\n"
+        f"  hyp: {hyp!r} → {normalize_for_wer(hyp, language='de')!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Hr. Müller, am 1. Januar, ähm, ungefähr 50% Rabatt.",
+        "Schreib an info@beispiel.de oder besuche https://beispiel.de",
+        "Das kostet €5 und €3,50",
+    ],
+)
+def test_german_pipeline_idempotent(text):
+    once = normalize_for_wer(text, language="de")
+    twice = normalize_for_wer(once, language="de")
+    assert once == twice, f"Not idempotent:\n  once:  {once!r}\n  twice: {twice!r}"
+
+
+# ===========================================================================
+# FRENCH — full pipeline
+# ===========================================================================
+
+
+def wer_fr(ref: str, hyp: str) -> float:
+    return jiwer.wer(
+        normalize_for_wer(ref, language="fr"),
+        normalize_for_wer(hyp, language="fr"),
+    )
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("M. Dupont", "monsieur dupont"),
+        ("Mme Dubois", "madame dubois"),
+        ("Mlle Martin", "mademoiselle martin"),
+        ("Dr. Petit", "docteur petit"),
+        ("Pr. Lefèvre", "professeur lefèvre"),
+        ("etc.", "et cetera"),
+        ("env. cinq", "environ cinq"),
+        ("av. de la République", "avenue de la république"),
+    ],
+)
+def test_french_abbreviation_expansion(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import ExpandAbbreviations
+
+    t = ExpandAbbreviations(language="fr")
+    result = t.process_string(input_text)
+    assert expected_fragment in result.lower(), f"{input_text!r} → {result!r}"
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("max@exemple.fr", "max arobase exemple point fr"),
+        ("info@mon-site.fr", "info arobase mon tiret site point fr"),
+    ],
+)
+def test_french_email_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeEmails
+
+    t = NormalizeEmails(language="fr")
+    assert expected_fragment in t.process_string(input_text)
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("https://exemple.fr", "exemple point fr"),
+        ("https://exemple-site.fr/page", "exemple tiret site point fr"),
+    ],
+)
+def test_french_url_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeURLs
+
+    t = NormalizeURLs(language="fr")
+    assert expected_fragment in t.process_string(input_text)
+
+
+@pytest.mark.parametrize(
+    "input_text, expected",
+    [
+        ("euh bonjour", "bonjour"),
+        ("ben oui", "oui"),
+        ("hum d'accord", "d'accord"),
+        ("alors voilà", "voilà"),
+    ],
+)
+def test_french_filler_removal(input_text, expected):
+    from extended_wer_normalizer.transforms import RemoveFillerWords
+
+    t = RemoveFillerWords(language="fr")
+    assert t.process_string(input_text).strip() == expected
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("€5", "cinq euros"),
+        ("€1", "un euro"),
+        ("€3.50", "cinquante centimes"),  # period also accepted
+        ("€3,50", "cinquante centimes"),  # French comma-decimal
+        ("$5", "cinq dollars"),
+    ],
+)
+def test_french_currency_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeCurrency
+
+    t = NormalizeCurrency(language="fr")
+    result = t.process_string(input_text)
+    assert expected_fragment in result, f"{input_text!r} → {result!r}"
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("50%", "cinquante pour cent"),
+        ("100%", "cent pour cent"),
+        ("3,5%", "pour cent"),
+        ("3.5%", "pour cent"),
+    ],
+)
+def test_french_percentage_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizePercentages
+
+    t = NormalizePercentages(language="fr")
+    result = t.process_string(input_text)
+    assert expected_fragment in result, f"{input_text!r} → {result!r}"
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("1er janvier", "premier janvier"),
+        ("2e étage", "deuxième étage"),
+        ("15e siècle", "quinzième siècle"),
+        ("100e fois", "centième fois"),
+    ],
+)
+def test_french_ordinal_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeOrdinals
+
+    t = NormalizeOrdinals(language="fr")
+    result = t.process_string(input_text)
+    assert expected_fragment in result, f"{input_text!r} → {result!r}"
+
+
+@pytest.mark.parametrize(
+    "input_text, expected_fragment",
+    [
+        ("chats & chiens", "chats et chiens"),
+        ("noir & blanc", "noir et blanc"),
+    ],
+)
+def test_french_symbol_normalization(input_text, expected_fragment):
+    from extended_wer_normalizer.transforms import NormalizeSymbols
+
+    t = NormalizeSymbols(language="fr")
+    assert expected_fragment in t.process_string(input_text).lower()
+
+
+@pytest.mark.parametrize(
+    "input_text, expected",
+    [
+        ("j'aime", "j aime"),
+        ("l'eau", "l eau"),
+        ("d'accord", "d accord"),
+        ("qu'il pense", "qu il pense"),
+        ("jusqu'ici", "jusqu ici"),
+        # Typographic apostrophe also handled
+        ("c’est ça", "c est ça"),
+    ],
+)
+def test_french_elision_expansion(input_text, expected):
+    from extended_wer_normalizer.transforms import ExpandFrenchElisions
+
+    t = ExpandFrenchElisions()
+    assert t.process_string(input_text) == expected
+
+
+@pytest.mark.parametrize(
+    "ref, hyp",
+    [
+        ("M. Dupont", "monsieur dupont"),
+        ("Il coûte €5", "il coûte cinq euros"),
+        ("50% de réduction", "cinquante pour cent de réduction"),
+        ("euh oui", "oui"),
+        ("oui oui", "oui"),
+        ("le 1er janvier", "le premier janvier"),
+        # Elision drops the apostrophe → matches written form expanded with space
+        ("j'aime ça", "j aime ça"),
+    ],
+)
+def test_french_zero_wer(ref, hyp):
+    score = wer_fr(ref, hyp)
+    assert score == 0.0, (
+        f"WER={score} (expected 0.0)\n"
+        f"  ref: {ref!r} → {normalize_for_wer(ref, language='fr')!r}\n"
+        f"  hyp: {hyp!r} → {normalize_for_wer(hyp, language='fr')!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "M. Dupont, le 1er janvier, euh, environ 50% de réduction.",
+        "Écrivez à info@exemple.fr ou visitez https://exemple.fr",
+        "C'est €5,99 pour deux",
+    ],
+)
+def test_french_pipeline_idempotent(text):
+    once = normalize_for_wer(text, language="fr")
+    twice = normalize_for_wer(once, language="fr")
+    assert once == twice, f"Not idempotent:\n  once:  {once!r}\n  twice: {twice!r}"
+
+
+# ===========================================================================
+# CROSS-LANGUAGE — full pipelines all idempotent on the same input shape
+# ===========================================================================
+
+
+@pytest.mark.parametrize("language", ["en", "de", "fr"])
+def test_full_pipeline_idempotent_per_language(language):
+    samples = {
+        "en": "Dr. Smith's 1st visit cost $5.99 — um, around 50% off.",
+        "de": "Hr. Müller, am 1. Januar, ähm, ungefähr 50% Rabatt.",
+        "fr": "M. Dupont, le 1er janvier, euh, environ 50% de réduction.",
+    }
+    text = samples[language]
+    once = normalize_for_wer(text, language=language)
+    twice = normalize_for_wer(once, language=language)
+    assert once == twice, f"[{language}] not idempotent:\n  once:  {once!r}\n  twice: {twice!r}"
+
+
+@pytest.mark.parametrize("language", ["en", "de", "fr"])
+def test_pipeline_attached_to_module_export(language):
+    """The module-level pipelines are exposed and runnable."""
+    from extended_wer_normalizer import (
+        english_wer_pipeline,
+        french_wer_pipeline,
+        german_wer_pipeline,
+    )
+
+    pipelines = {
+        "en": english_wer_pipeline,
+        "de": german_wer_pipeline,
+        "fr": french_wer_pipeline,
+    }
+    out = pipelines[language](["Hello world"])
+    assert isinstance(out, list) and len(out) == 1
