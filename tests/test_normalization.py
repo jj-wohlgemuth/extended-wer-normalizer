@@ -51,12 +51,70 @@ def wer(ref: str, hyp: str) -> float:
         ("0178 One. Two. Three.", "0 1 7 8 1 2 3"),
         ("Please press 1 2 3 and confirm.", "please press one two three and confirm"),
         ("0 One 2 Three 4", "zero one two three four"),
+        # Compound spoken numbers must collapse to the same digit form as the
+        # numeric representation (both end up split into space-separated digits
+        # by ExpandDigitRuns).
+        ("twenty one", "21"),
+        ("thirty five", "35"),
+        ("one hundred twenty three", "123"),
+        ("two hundred twenty one", "221"),
+        ("one thousand", "1000"),
+        # Compound numbers embedded in sentences.
+        ("I have twenty one apples", "I have 21 apples"),
+        ("call extension thirty five please", "call extension 35 please"),
     ],
 )
 def test_number_normalization_produces_equal_strings(a, b):
     assert normalize_for_wer(a) == normalize_for_wer(b), (
         f"\n  normalize_for_wer({a!r}) → {normalize_for_wer(a)!r}"
         f"\n  normalize_for_wer({b!r}) → {normalize_for_wer(b)!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "a, b",
+    [
+        # German compound numbers — single-word "<units>und<tens>".
+        ("einundzwanzig", "21"),
+        ("fünfunddreißig", "35"),
+        ("einhundertdreiundzwanzig", "123"),
+        ("zweihunderteinundzwanzig", "221"),
+        ("eintausend", "1000"),
+        ("vierundneunzig", "94"),
+        ("zwölf", "12"),
+        # Embedded in sentences.
+        ("ich habe einundzwanzig Äpfel", "ich habe 21 Äpfel"),
+    ],
+)
+def test_number_normalization_de_compound_equal_strings(a, b):
+    assert normalize_for_wer(a, language="de") == normalize_for_wer(b, language="de"), (
+        f"\n  normalize_for_wer({a!r}, 'de') → {normalize_for_wer(a, language='de')!r}"
+        f"\n  normalize_for_wer({b!r}, 'de') → {normalize_for_wer(b, language='de')!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "a, b",
+    [
+        # French compound numbers — `et`-joined, hyphenated, `quatre-vingt` multiplicative.
+        ("vingt et un", "21"),
+        ("vingt-et-un", "21"),
+        ("trente-cinq", "35"),
+        ("cent vingt-trois", "123"),
+        ("deux cent vingt et un", "221"),
+        ("mille", "1000"),
+        ("quatre-vingt-quatorze", "94"),
+        ("quatre-vingts", "80"),
+        ("soixante-dix", "70"),
+        ("douze", "12"),
+        # Embedded in sentences.
+        ("j'ai vingt et un ans", "j'ai 21 ans"),
+    ],
+)
+def test_number_normalization_fr_compound_equal_strings(a, b):
+    assert normalize_for_wer(a, language="fr") == normalize_for_wer(b, language="fr"), (
+        f"\n  normalize_for_wer({a!r}, 'fr') → {normalize_for_wer(a, language='fr')!r}"
+        f"\n  normalize_for_wer({b!r}, 'fr') → {normalize_for_wer(b, language='fr')!r}"
     )
 
 
@@ -458,13 +516,83 @@ def test_digit_word_preserves_adjacent_punctuation():
     assert t.process_string("two,") == "2,"
 
 
-def test_compound_number_left_intact():
-    """Words adjacent to compositional number words are not converted."""
+def test_digit_words_to_chars_skips_compositional_neighbors():
+    """`DigitWordsToChars` in isolation leaves digit-words next to a
+    compositional number word alone. The pipeline-level conversion of
+    "twenty one" → "21" is handled by `CompoundSpokenNumbersToDigits`.
+    """
     from extended_wer_normalizer.transforms import DigitWordsToChars
 
     t = DigitWordsToChars()
     assert t.process_string("twenty one") == "twenty one"
     assert t.process_string("one hundred") == "one hundred"
+
+
+def test_compound_spoken_numbers_to_digits_en():
+    """Direct unit tests for `CompoundSpokenNumbersToDigits` in English."""
+    from extended_wer_normalizer.transforms import CompoundSpokenNumbersToDigits
+
+    t = CompoundSpokenNumbersToDigits("en")
+    # Compositional spoken numbers → digit strings.
+    assert t.process_string("twenty one") == "21"
+    assert t.process_string("thirty five") == "35"
+    assert t.process_string("one hundred twenty three") == "123"
+    assert t.process_string("two hundred twenty one") == "221"
+    assert t.process_string("one thousand") == "1000"
+    assert t.process_string("one thousand two hundred") == "1200"
+    # Solo teen / tens / scale words also convert.
+    assert t.process_string("twelve") == "12"
+    assert t.process_string("twenty") == "20"
+    # Embedded in surrounding text.
+    assert t.process_string("call ext twenty one now") == "call ext 21 now"
+    # Trailing punctuation preserved.
+    assert t.process_string("twenty one.") == "21."
+    # Isolated single-digit words: left alone (handled downstream by DigitWordsToChars).
+    assert t.process_string("one") == "one"
+
+
+def test_compound_spoken_numbers_to_digits_de():
+    """German compound numbers: `<units>und<tens>` is a single word."""
+    from extended_wer_normalizer.transforms import CompoundSpokenNumbersToDigits
+
+    t = CompoundSpokenNumbersToDigits("de")
+    assert t.process_string("einundzwanzig") == "21"
+    assert t.process_string("fünfunddreißig") == "35"
+    assert t.process_string("einhundertdreiundzwanzig") == "123"
+    assert t.process_string("zweihunderteinundzwanzig") == "221"
+    assert t.process_string("eintausend") == "1000"
+    assert t.process_string("vierundneunzig") == "94"
+    assert t.process_string("zwölf") == "12"
+
+
+def test_compound_spoken_numbers_to_digits_fr():
+    """French: hyphenated and `et`-joined forms, `quatre-vingt` multiplication."""
+    from extended_wer_normalizer.transforms import CompoundSpokenNumbersToDigits
+
+    t = CompoundSpokenNumbersToDigits("fr")
+    assert t.process_string("vingt et un") == "21"
+    assert t.process_string("vingt-et-un") == "21"
+    assert t.process_string("trente-cinq") == "35"
+    assert t.process_string("cent vingt-trois") == "123"
+    assert t.process_string("deux cent vingt et un") == "221"
+    assert t.process_string("mille") == "1000"
+    assert t.process_string("quatre-vingt-quatorze") == "94"
+    assert t.process_string("quatre-vingts") == "80"
+    assert t.process_string("douze") == "12"
+
+
+def test_compound_spoken_numbers_to_digits_unsupported_lang_noop():
+    """Languages outside text2num's set fall back to no-op."""
+    from extended_wer_normalizer.transforms import CompoundSpokenNumbersToDigits
+
+    # Build a transform for a supported language, then flip the language code
+    # to simulate an unsupported one. Avoids polluting the global LanguageData
+    # registry that other tests rely on.
+    t = CompoundSpokenNumbersToDigits("en")
+    t._code = "xx"  # not in text2num's supported set
+    t._enabled = False
+    assert t.process_string("twenty one") == "twenty one"
+    assert t.process_string("einundzwanzig") == "einundzwanzig"
 
 
 def test_email_no_match_unchanged():

@@ -35,6 +35,52 @@ class ExpandDigitRuns(AbstractTransform):
         return re.sub(r"(?<![.,\d])\d{2,}", lambda m: " ".join(m.group()), s)
 
 
+class CompoundSpokenNumbersToDigits(AbstractTransform):
+    """Convert runs of spoken-number words to their digit form.
+
+    Examples:
+      en: "twenty one"               → "21"
+      en: "one hundred twenty three" → "123"
+      en: "one thousand"             → "1000"
+      de: "einundzwanzig"            → "21"
+      de: "einhundertdreiundzwanzig" → "123"
+      de: "vierundneunzig"           → "94"
+      fr: "vingt et un"              → "21"
+      fr: "quatre-vingt-quatorze"    → "94"
+      fr: "cent vingt-trois"         → "123"
+
+    Built on top of `text2num.alpha2digit`, which handles language-specific
+    compound-number grammar (English "tens-then-units", German
+    "<units>und<tens>", French "quatre-vingt" multiplication, etc.). Isolated
+    single-digit words like "one" / "ein" / "un" are deliberately left alone
+    by `alpha2digit` — they continue through the pipeline to be handled by
+    `DigitWordsToChars` (which preserves punctuation) and then by
+    `ExpandDigitRuns`. Phone-digit-style readings like "zero one seven six"
+    or "ein zwei drei" turn into "01 7 6" / "1 2 3" here, but
+    `ExpandDigitRuns` then splits the leading "01" pair into "0 1", which
+    matches the canonical form produced for the digit string "0176".
+
+    No-op for languages not supported by `text2num` (currently any code
+    outside {en, fr, de, es, pt, nl, it}). `LanguageData.code` is what
+    determines the routing.
+    """
+
+    # text2num as of 3.x — extend this set if/when new languages land upstream.
+    _SUPPORTED: frozenset[str] = frozenset({"en", "fr", "de", "es", "pt", "nl", "it"})
+
+    def __init__(self, language: str = "en") -> None:
+        # Resolve via the language registry so a typo in `language` raises early.
+        self._code = get_language_data(language).code
+        self._enabled = self._code in self._SUPPORTED
+
+    def process_string(self, s: str) -> str:
+        if not self._enabled or not s:
+            return s
+        from text_to_num import alpha2digit
+
+        return alpha2digit(s, self._code)
+
+
 class DigitWordsToChars(AbstractTransform):
     """Convert isolated single-digit words to digit characters.
 

@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "jiwer>=3.0",
     "num2words>=0.5",
+    "text2num>=2.5",
 ]
 
 [project.urls]
