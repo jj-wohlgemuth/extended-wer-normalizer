@@ -7,6 +7,7 @@ import jiwer
 from .languages import get_language_data, supported_languages
 from .transforms import (
     CollapseRepetitions,
+    CompoundSpokenNumbersToDigits,
     DigitWordsToChars,
     ExpandAbbreviations,
     ExpandDigitRuns,
@@ -27,6 +28,7 @@ __all__ = [
     "german_wer_pipeline",
     "french_wer_pipeline",
     "CollapseRepetitions",
+    "CompoundSpokenNumbersToDigits",
     "DigitWordsToChars",
     "ExpandAbbreviations",
     "ExpandDigitRuns",
@@ -66,9 +68,16 @@ def _build_pipeline(language: str) -> jiwer.Compose:
 
     steps.extend(
         [
+            # Compound-number → digit runs BEFORE punctuation removal so that
+            # French hyphenated forms ("quatre-vingt-quatorze") and German
+            # closed compounds ("einundzwanzig") still carry their structure
+            # when text2num looks at them. text2num is case-insensitive, so
+            # placement before ToLowerCase is fine. The resulting digit block
+            # (e.g. "twenty one" → "21") is then split into "2 1" by
+            # ExpandDigitRuns, matching the canonical form for "21".
+            CompoundSpokenNumbersToDigits(language),
             jiwer.ToLowerCase(),
             jiwer.RemovePunctuation(),
-            # Digit normalization (after lowercase + punctuation removal).
             ExpandDigitRuns(),
             DigitWordsToChars(language),
             jiwer.RemoveMultipleSpaces(),

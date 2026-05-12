@@ -18,6 +18,10 @@ class LanguageData:
     Currency plural maps are explicit (no "+s" fallback) so each language can
     encode its own pluralization rules — e.g. German leaves most currency units
     invariant ("fünf Euro", not "fünf Euros").
+
+    Compound-number conversion (`CompoundSpokenNumbersToDigits`) is keyed off
+    `code` directly: the transform delegates to `text2num.alpha2digit`, which
+    embeds the per-language number grammar.
     """
 
     code: str
