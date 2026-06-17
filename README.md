@@ -64,7 +64,7 @@ wer = jiwer.wer(reference, hypothesis, reference_transform=english_wer_pipeline,
 | `ExpandAbbreviations` | `"Dr."` → `"doctor"`, `"vs."` → `"versus"` |
 | `NormalizeSymbols` | `"cats & dogs"` → `"cats and dogs"` |
 | `RemoveFillerWords` | removes `um`, `uh`, `hmm`, `er`, `ah`, … |
-| `CollapseRepetitions` | `"I I I think"` → `"I think"` |
+| `CollapseRepetitions` | `"yes yes yes yes"` → `"yes"` (collapses runs of 4+; configurable via `max_repeats`) |
 | `ExpandFrenchElisions` | `"j'aime"` → `"j aime"`, `"qu'il"` → `"qu il"` (French only) |
 
 Every transform that consumes language-specific data accepts a `language="en"` keyword (default English): `NormalizeEmails(language="fr")`, `ExpandAbbreviations(language="de")`, etc.
@@ -96,6 +96,10 @@ normalize_for_wer("M. Dupont, le 1er janvier, c'est €5,99", language="fr")
 # Spanish, Italian, … fall through to the minimal pipeline
 normalize_for_wer("¡Hola, mundo!", language="es")
 # → "hola mundo"
+
+# Tune the repetition-collapse threshold (default 3 → collapse runs of 4+)
+normalize_for_wer("no no no", max_repeats=1)  # collapse any 2+ run
+# → "no"
 ```
 
 Per-language pipelines are also exposed for direct use with `jiwer.wer`:

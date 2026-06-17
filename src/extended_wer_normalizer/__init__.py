@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import jiwer
 
-from .languages import get_language_data, supported_languages
+from .languages import supported_languages
 from .transforms import (
     CollapseRepetitions,
     CompoundSpokenNumbersToDigits,
@@ -43,10 +43,26 @@ __all__ = [
 ]
 
 
-def _build_pipeline(language: str) -> jiwer.Compose:
-    """Compose a full WER-normalization pipeline for `language`."""
-    # Validate the language registers (will raise if unsupported).
-    get_language_data(language)
+DEFAULT_MAX_REPEATS = 3
+
+
+def _build_pipeline(language: str, max_repeats: int = DEFAULT_MAX_REPEATS) -> jiwer.Compose:
+    """Compose a WER-normalization pipeline for `language`.
+
+    Supported languages ("en", "de", "fr") get the full structure. Any other
+    language falls back to a minimal language-agnostic pipeline: lowercase,
+    punctuation/whitespace cleanup, and repetition collapse.
+    """
+    if language not in supported_languages():
+        return jiwer.Compose(
+            [
+                jiwer.ToLowerCase(),
+                jiwer.RemovePunctuation(),
+                jiwer.RemoveMultipleSpaces(),
+                jiwer.Strip(),
+                CollapseRepetitions(max_repeats),
+            ]
+        )
 
     steps: list = [
         # Pattern-specific normalizations run first, before punctuation is stripped.
@@ -84,7 +100,7 @@ def _build_pipeline(language: str) -> jiwer.Compose:
             jiwer.Strip(),
             # Speech artifact cleanup.
             RemoveFillerWords(language),
-            CollapseRepetitions(),
+            CollapseRepetitions(max_repeats),
         ]
     )
     return jiwer.Compose(steps)
@@ -101,7 +117,9 @@ _PIPELINES: dict[str, jiwer.Compose] = {
 }
 
 
-def normalize_for_wer(text: str, language: str = "en") -> str:
+def normalize_for_wer(
+    text: str, language: str = "en", max_repeats: int = DEFAULT_MAX_REPEATS
+) -> str:
     """Normalize text for WER comparison.
 
     Supported full-pipeline languages: "en", "de", "fr". Each runs the same
@@ -111,18 +129,18 @@ def normalize_for_wer(text: str, language: str = "en") -> str:
     none for "de").
 
     For any other `language` value, applies a minimal language-agnostic pipeline:
-    lowercase, punctuation removal, whitespace normalization. Useful as a
-    fallback for languages that don't yet have a tuned data module.
+    lowercase, punctuation removal, whitespace normalization, and repetition
+    collapse. Useful as a fallback for languages that don't yet have a tuned
+    data module.
+
+    `max_repeats` controls the repetition-collapse threshold: a word must repeat
+    more than this many times in a row before the run is collapsed to a single
+    occurrence (default 3, i.e. runs of 4+ collapse). See `CollapseRepetitions`.
     """
-    if language in _PIPELINES:
-        result = _PIPELINES[language]([text])
-        return result[0].strip()
-    pipeline = jiwer.Compose(
-        [
-            jiwer.ToLowerCase(),
-            jiwer.RemovePunctuation(),
-            jiwer.RemoveMultipleSpaces(),
-            jiwer.Strip(),
-        ]
-    )
+    # Reuse the prebuilt pipelines for the default threshold; build a one-off
+    # only when a custom max_repeats or an unsupported language is requested.
+    if max_repeats == DEFAULT_MAX_REPEATS and language in _PIPELINES:
+        pipeline = _PIPELINES[language]
+    else:
+        pipeline = _build_pipeline(language, max_repeats)
     return pipeline([text])[0].strip()

@@ -301,10 +301,12 @@ def test_filler_zero_wer():
 @pytest.mark.parametrize(
     "input_text, expected",
     [
-        ("I I I think", "I think"),
-        ("the the cat", "the cat"),
-        ("yes yes yes", "yes"),
-        ("no no", "no"),
+        # Default max_repeats=3 → collapse only runs of 4+ occurrences.
+        ("I I I I think", "I think"),
+        ("yes yes yes yes", "yes"),
+        ("the the cat", "the the cat"),  # 2 occurrences — kept
+        ("yes yes yes", "yes yes yes"),  # 3 occurrences — kept
+        ("no no", "no no"),  # ordinary doubling — kept
         ("hello world", "hello world"),  # no repetition — unchanged
     ],
 )
@@ -313,9 +315,31 @@ def test_collapse_repetitions(input_text, expected):
     assert t.process_string(input_text) == expected
 
 
+def test_collapse_repetitions_custom_threshold():
+    t = CollapseRepetitions(max_repeats=1)  # collapse any 2+ run
+    assert t.process_string("no no") == "no"
+    assert t.process_string("yes yes yes") == "yes"
+
+
+def test_collapse_repetitions_rejects_zero_threshold():
+    with pytest.raises(ValueError):
+        CollapseRepetitions(max_repeats=0)
+
+
+def test_normalize_for_wer_max_repeats_param():
+    from extended_wer_normalizer import normalize_for_wer
+
+    # Default threshold leaves a short repeat alone.
+    assert normalize_for_wer("no no") == "no no"
+    # Lowering the threshold via the public API collapses it.
+    assert normalize_for_wer("no no", max_repeats=1) == "no"
+    # Also honored on the language-agnostic fallback path.
+    assert normalize_for_wer("no no", "es", max_repeats=1) == "no"
+
+
 def test_stutter_zero_wer():
     ref = "I think so"
-    hyp = "I I I think so"
+    hyp = "I I I I think so"
     assert wer(ref, hyp) == 0.0, f"WER={wer(ref, hyp)}"
 
 
@@ -610,18 +634,18 @@ def test_filler_consecutive():
     assert t.process_string("um uh yeah") == "yeah"
 
 
-def test_collapse_three_repetitions():
+def test_collapse_four_repetitions():
     from extended_wer_normalizer.transforms import CollapseRepetitions
 
     t = CollapseRepetitions()
-    assert t.process_string("yes yes yes") == "yes"
+    assert t.process_string("yes yes yes yes") == "yes"
 
 
 def test_collapse_mixed_case_repetitions():
     from extended_wer_normalizer.transforms import CollapseRepetitions
 
     t = CollapseRepetitions()
-    assert t.process_string("Yes yes YES") == "Yes"
+    assert t.process_string("Yes yes YES yes") == "Yes"
 
 
 def test_currency_zero_major():
@@ -906,7 +930,7 @@ def test_german_symbol_normalization(input_text, expected_fragment):
         ("Es kostet €5", "es kostet fünf euro"),
         ("50% Rabatt", "fünfzig prozent rabatt"),
         ("ähm ja", "ja"),
-        ("ich ich denke", "ich denke"),
+        ("ich ich ich ich denke", "ich denke"),
         ("am 1. Januar", "am erste Januar"),
     ],
 )
@@ -1102,7 +1126,7 @@ def test_french_elision_expansion(input_text, expected):
         ("Il coûte €5", "il coûte cinq euros"),
         ("50% de réduction", "cinquante pour cent de réduction"),
         ("euh oui", "oui"),
-        ("oui oui", "oui"),
+        ("oui oui oui oui", "oui"),
         ("le 1er janvier", "le premier janvier"),
         # Elision drops the apostrophe → matches written form expanded with space
         ("j'aime ça", "j aime ça"),
