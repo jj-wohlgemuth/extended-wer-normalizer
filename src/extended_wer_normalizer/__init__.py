@@ -44,9 +44,7 @@ __all__ = [
 DEFAULT_MAX_REPEATS = 3
 
 
-def _build_pipeline(
-    language: str, max_repeats: int = DEFAULT_MAX_REPEATS
-) -> jiwer.Compose:
+def _build_pipeline(language: str, max_repeats: int = DEFAULT_MAX_REPEATS) -> jiwer.Compose:
     """Compose a full WER-normalization pipeline for `language`."""
     # Validate the language registers (will raise if unsupported).
     get_language_data(language)
