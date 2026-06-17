@@ -102,8 +102,9 @@ def normalize_for_wer(text: str, language: str = "en") -> str:
     none for "de").
 
     For any other `language` value, applies a minimal language-agnostic pipeline:
-    lowercase, punctuation removal, whitespace normalization. Useful as a
-    fallback for languages that don't yet have a tuned data module.
+    lowercase, punctuation removal, whitespace normalization, and repetition
+    collapse. Useful as a fallback for languages that don't yet have a tuned
+    data module.
     """
     if language in _PIPELINES:
         result = _PIPELINES[language]([text])
@@ -114,6 +115,8 @@ def normalize_for_wer(text: str, language: str = "en") -> str:
             jiwer.RemovePunctuation(),
             jiwer.RemoveMultipleSpaces(),
             jiwer.Strip(),
+            # Language-agnostic, so it applies even without a tuned data module.
+            CollapseRepetitions(),
         ]
     )
     return pipeline([text])[0].strip()
