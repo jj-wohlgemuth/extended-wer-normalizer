@@ -96,6 +96,10 @@ normalize_for_wer("M. Dupont, le 1er janvier, c'est €5,99", language="fr")
 # Spanish, Italian, … fall through to the minimal pipeline
 normalize_for_wer("¡Hola, mundo!", language="es")
 # → "hola mundo"
+
+# Tune the repetition-collapse threshold (default 3 → collapse runs of 4+)
+normalize_for_wer("no no no", max_repeats=1)  # collapse any 2+ run
+# → "no"
 ```
 
 Per-language pipelines are also exposed for direct use with `jiwer.wer`:

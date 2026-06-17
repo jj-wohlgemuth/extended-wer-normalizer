@@ -41,7 +41,12 @@ __all__ = [
 ]
 
 
-def _build_pipeline(language: str) -> jiwer.Compose:
+DEFAULT_MAX_REPEATS = 3
+
+
+def _build_pipeline(
+    language: str, max_repeats: int = DEFAULT_MAX_REPEATS
+) -> jiwer.Compose:
     """Compose a full WER-normalization pipeline for `language`."""
     # Validate the language registers (will raise if unsupported).
     get_language_data(language)
@@ -75,10 +80,26 @@ def _build_pipeline(language: str) -> jiwer.Compose:
             jiwer.Strip(),
             # Speech artifact cleanup.
             RemoveFillerWords(language),
-            CollapseRepetitions(),
+            CollapseRepetitions(max_repeats),
         ]
     )
     return jiwer.Compose(steps)
+
+
+def _build_fallback_pipeline(
+    max_repeats: int = DEFAULT_MAX_REPEATS,
+) -> jiwer.Compose:
+    """Minimal language-agnostic pipeline for languages without a data module."""
+    return jiwer.Compose(
+        [
+            jiwer.ToLowerCase(),
+            jiwer.RemovePunctuation(),
+            jiwer.RemoveMultipleSpaces(),
+            jiwer.Strip(),
+            # Language-agnostic, so it applies even without a tuned data module.
+            CollapseRepetitions(max_repeats),
+        ]
+    )
 
 
 english_wer_pipeline = _build_pipeline("en")
@@ -91,8 +112,12 @@ _PIPELINES: dict[str, jiwer.Compose] = {
     "fr": french_wer_pipeline,
 }
 
+_FALLBACK_PIPELINE = _build_fallback_pipeline()
 
-def normalize_for_wer(text: str, language: str = "en") -> str:
+
+def normalize_for_wer(
+    text: str, language: str = "en", max_repeats: int = DEFAULT_MAX_REPEATS
+) -> str:
     """Normalize text for WER comparison.
 
     Supported full-pipeline languages: "en", "de", "fr". Each runs the same
@@ -105,18 +130,21 @@ def normalize_for_wer(text: str, language: str = "en") -> str:
     lowercase, punctuation removal, whitespace normalization, and repetition
     collapse. Useful as a fallback for languages that don't yet have a tuned
     data module.
+
+    `max_repeats` controls the repetition-collapse threshold: a word must repeat
+    more than this many times in a row before the run is collapsed to a single
+    occurrence (default 3, i.e. runs of 4+ collapse). See `CollapseRepetitions`.
     """
     if language in _PIPELINES:
-        result = _PIPELINES[language]([text])
-        return result[0].strip()
-    pipeline = jiwer.Compose(
-        [
-            jiwer.ToLowerCase(),
-            jiwer.RemovePunctuation(),
-            jiwer.RemoveMultipleSpaces(),
-            jiwer.Strip(),
-            # Language-agnostic, so it applies even without a tuned data module.
-            CollapseRepetitions(),
-        ]
-    )
+        pipeline = (
+            _PIPELINES[language]
+            if max_repeats == DEFAULT_MAX_REPEATS
+            else _build_pipeline(language, max_repeats)
+        )
+    else:
+        pipeline = (
+            _FALLBACK_PIPELINE
+            if max_repeats == DEFAULT_MAX_REPEATS
+            else _build_fallback_pipeline(max_repeats)
+        )
     return pipeline([text])[0].strip()

@@ -268,6 +268,17 @@ def test_collapse_repetitions_rejects_zero_threshold():
         CollapseRepetitions(max_repeats=0)
 
 
+def test_normalize_for_wer_max_repeats_param():
+    from extended_wer_normalizer import normalize_for_wer
+
+    # Default threshold leaves a short repeat alone.
+    assert normalize_for_wer("no no") == "no no"
+    # Lowering the threshold via the public API collapses it.
+    assert normalize_for_wer("no no", max_repeats=1) == "no"
+    # Also honored on the language-agnostic fallback path.
+    assert normalize_for_wer("no no", "es", max_repeats=1) == "no"
+
+
 def test_stutter_zero_wer():
     ref = "I think so"
     hyp = "I I I I think so"
