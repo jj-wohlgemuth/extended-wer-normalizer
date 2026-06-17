@@ -150,21 +150,39 @@ class RemoveFillerWords(AbstractTransform):
 
 
 class CollapseRepetitions(AbstractTransform):
-    """Collapse consecutive identical words to a single occurrence.
+    """Collapse long runs of the same consecutive word to a single occurrence.
 
-    Models ASR output stuttering: "I I I think" → "I think".
+    Models ASR hallucination loops: "yes yes yes yes" → "yes". Only runs with
+    more than ``max_repeats`` repetitions are collapsed, so ordinary doublings
+    ("no no") and short repeats are preserved. With the default ``max_repeats=3``
+    a word must appear at least 4 times in a row before collapsing.
+
     Case-insensitive comparison; preserves the first occurrence's casing.
     Language-agnostic.
     """
+
+    def __init__(self, max_repeats: int = 3) -> None:
+        if max_repeats < 1:
+            raise ValueError("max_repeats must be >= 1")
+        self._max_repeats = max_repeats
 
     def process_string(self, s: str) -> str:
         words = s.split()
         if not words:
             return s
-        out = [words[0]]
-        for w in words[1:]:
-            if w.lower() != out[-1].lower():
-                out.append(w)
+        out: list[str] = []
+        i = 0
+        n = len(words)
+        while i < n:
+            j = i + 1
+            while j < n and words[j].lower() == words[i].lower():
+                j += 1
+            # Repetitions beyond the first occurrence in this run.
+            if (j - i) - 1 >= self._max_repeats:
+                out.append(words[i])
+            else:
+                out.extend(words[i:j])
+            i = j
         return " ".join(out)
 
 

@@ -64,7 +64,7 @@ wer = jiwer.wer(reference, hypothesis, reference_transform=english_wer_pipeline,
 | `ExpandAbbreviations` | `"Dr."` → `"doctor"`, `"vs."` → `"versus"` |
 | `NormalizeSymbols` | `"cats & dogs"` → `"cats and dogs"` |
 | `RemoveFillerWords` | removes `um`, `uh`, `hmm`, `er`, `ah`, … |
-| `CollapseRepetitions` | `"I I I think"` → `"I think"` |
+| `CollapseRepetitions` | `"yes yes yes yes"` → `"yes"` (collapses runs of 4+; configurable via `max_repeats`) |
 | `ExpandFrenchElisions` | `"j'aime"` → `"j aime"`, `"qu'il"` → `"qu il"` (French only) |
 
 Every transform that consumes language-specific data accepts a `language="en"` keyword (default English): `NormalizeEmails(language="fr")`, `ExpandAbbreviations(language="de")`, etc.
