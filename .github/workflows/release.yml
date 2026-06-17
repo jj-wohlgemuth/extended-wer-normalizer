@@ -1,0 +1,31 @@
+name: Release
+
+# Publishes to PyPI when a version tag (vX.Y.Z) is pushed.
+# Uses PyPI Trusted Publishing (OIDC) — no API token is stored anywhere.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    name: Build & publish to PyPI
+    runs-on: ubuntu-latest
+    # The `pypi` environment must also be named in the PyPI trusted-publisher
+    # config. Remove this line in both places if you don't want an environment.
+    environment: pypi
+    permissions:
+      id-token: write # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      # Gate the release on the test suite so a tag can't ship broken code.
+      - name: Run tests
+        run: uv run pytest tests/ -q
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always
