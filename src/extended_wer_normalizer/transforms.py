@@ -203,6 +203,11 @@ class CollapseRepetitions(AbstractTransform):
     ("no no") and short repeats are preserved. With the default ``max_repeats=3``
     a word must appear at least 4 times in a row before collapsing.
 
+    All-digit tokens are exempt: ``ExpandDigitRuns`` runs earlier in the
+    pipeline and turns round numbers into repeated digits ("ten thousand" →
+    "10000" → "1 0 0 0 0"), and phone numbers legitimately repeat digits —
+    collapsing either destroys the value ("1 0 0 0 0" → "1 0").
+
     Case-insensitive comparison; preserves the first occurrence's casing.
     Language-agnostic.
     """
@@ -224,7 +229,7 @@ class CollapseRepetitions(AbstractTransform):
             while j < n and words[j].lower() == words[i].lower():
                 j += 1
             # Repetitions beyond the first occurrence in this run.
-            if (j - i) - 1 >= self._max_repeats:
+            if (j - i) - 1 >= self._max_repeats and not words[i].isdigit():
                 out.append(words[i])
             else:
                 out.extend(words[i:j])
