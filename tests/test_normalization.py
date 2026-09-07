@@ -308,11 +308,33 @@ def test_filler_zero_wer():
         ("yes yes yes", "yes yes yes"),  # 3 occurrences — kept
         ("no no", "no no"),  # ordinary doubling — kept
         ("hello world", "hello world"),  # no repetition — unchanged
+        # Digit tokens are exempt, however long the run: ExpandDigitRuns
+        # produces them from round numbers, and phone numbers repeat digits.
+        ("1 0 0 0 0", "1 0 0 0 0"),
+        ("5 5 5 5 5", "5 5 5 5 5"),
     ],
 )
 def test_collapse_repetitions(input_text, expected):
     t = CollapseRepetitions()
     assert t.process_string(input_text) == expected
+
+
+@pytest.mark.parametrize(
+    "input_text, expected",
+    [
+        # Round spoken numbers survive end-to-end: 10000 expands to five
+        # digits whose zero run must not read as a hallucination loop.
+        ("ten thousand", "1 0 0 0 0"),
+        ("twenty thousand miles", "2 0 0 0 0 miles"),
+        ("an oil change at ten thousand miles", "an oil change at 1 0 0 0 0 miles"),
+        # Written digits take the same path.
+        ("call 5555", "call 5 5 5 5"),
+    ],
+)
+def test_digit_runs_survive_repetition_collapse(input_text, expected):
+    from extended_wer_normalizer import normalize_for_wer
+
+    assert normalize_for_wer(input_text, language="en") == expected
 
 
 def test_collapse_repetitions_custom_threshold():
